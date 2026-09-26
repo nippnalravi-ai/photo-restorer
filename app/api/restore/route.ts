@@ -1,54 +1,46 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const file = formData.get("file") as File;
+    const { image } = await req.json();
 
-    if (!file) {
+    if (!image) {
       return NextResponse.json({ error: "No image provided" }, { status: 400 });
     }
 
-    const bytes = await file.arrayBuffer();
+    // 1. Convert base64 data URL to a binary Buffer
+    const base64Data = image.split(",")[1] || image;
+    const imageBuffer = Buffer.from(base64Data, "base64");
 
-    const hfToken = process.env.HF_TOKEN;
-    if (!hfToken) {
-      return NextResponse.json(
-        { error: "HF_TOKEN environment variable is missing in Vercel." },
-        { status: 500 }
-      );
-    }
-
-    // Call Hugging Face Serverless API (GFP-GAN model)
+    // 2. Call Hugging Face API with binary image payload
     const response = await fetch(
-      "https://api-inference.huggingface.co/models/tencentarc/gfpgan",
+      "https://api-inference.huggingface.co/models/VINAI/UpScale",
       {
+        method: "POST",
         headers: {
-          Authorization: `Bearer ${hfToken}`,
+          Authorization: `Bearer ${process.env.HF_TOKEN}`,
           "Content-Type": "application/octet-stream",
         },
-        method: "POST",
-        body: bytes,
+        body: imageBuffer,
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
       return NextResponse.json(
-        { error: `Hugging Face API Error: ${errorText}` },
+        { error: `Hugging Face API error (${response.status}): ${errorText}` },
         { status: response.status }
       );
     }
 
+    // 3. Convert returned binary output back to a Base64 data URL
     const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const mimeType = response.headers.get("content-type") || "image/png";
-    const resultUrl = `data:${mimeType};base64,${base64}`;
+    const resultBase64 = `data:image/png;base64,${Buffer.from(arrayBuffer).toString("base64")}`;
 
-    return NextResponse.json({ resultUrl });
-  } catch (error: any) {
+    return NextResponse.json({ result: resultBase64 });
+  } catch (err: any) {
     return NextResponse.json(
-      { error: error.message || "Failed to process image" },
+      { error: err.message || "Failed to connect to API" },
       { status: 500 }
     );
   }
