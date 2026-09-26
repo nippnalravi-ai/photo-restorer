@@ -10,31 +10,46 @@ export async function POST(req: NextRequest) {
     }
 
     const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    const base64Image = `data:${file.type};base64,${buffer.toString("base64")}`;
 
-    const falResponse = await fetch("https://fal.run/fal-ai/codeformer", {
-      method: "POST",
-      headers: {
-        "Authorization": `Key ${process.env.FAL_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        image_url: base64Image,
-        fidelity: 0.7,
-      }),
-    });
-
-    if (!falResponse.ok) {
-      const errText = await falResponse.text();
-      return NextResponse.json({ error: `AI Processing failed: ${errText}` }, { status: 500 });
+    const hfToken = process.env.HF_TOKEN;
+    if (!hfToken) {
+      return NextResponse.json(
+        { error: "HF_TOKEN environment variable is missing in Vercel." },
+        { status: 500 }
+      );
     }
 
-    const data = await falResponse.json();
-    const resultUrl = data.image?.url || data.image_url;
+    // Call Hugging Face Serverless API (GFP-GAN model)
+    const response = await fetch(
+      "https://api-inference.huggingface.co/models/tencentarc/gfpgan",
+      {
+        headers: {
+          Authorization: `Bearer ${hfToken}`,
+          "Content-Type": "application/octet-stream",
+        },
+        method: "POST",
+        body: bytes,
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return NextResponse.json(
+        { error: `Hugging Face API Error: ${errorText}` },
+        { status: response.status }
+      );
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+    const mimeType = response.headers.get("content-type") || "image/png";
+    const resultUrl = `data:${mimeType};base64,${base64}`;
 
     return NextResponse.json({ resultUrl });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message || "Failed to process image" },
+      { status: 500 }
+    );
   }
-        }
+}
